@@ -38,9 +38,152 @@ let timerInterval = null;
 let transcriptText = '';
 
 /**
+ * Validate OpenAI API key by listing available models
+ */
+async function validateOpenAIKey(apiKey) {
+  if (!apiKey || !apiKey.trim()) {
+    return { valid: false, error: 'Please enter an API key' };
+  }
+
+  if (!apiKey.startsWith('sk-')) {
+    return { valid: false, error: 'API key should start with "sk-"' };
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/models', {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        return { valid: false, error: 'Invalid API key. Please check and try again.' };
+      }
+      if (response.status === 429) {
+        return { valid: false, error: 'Rate limited. Please wait and try again.' };
+      }
+      return { valid: false, error: `API error: ${response.status}` };
+    }
+
+    const data = await response.json();
+    const modelIds = data.data?.map(m => m.id) || [];
+
+    const hasWhisper = modelIds.some(id => id.includes('whisper'));
+    const hasGpt = modelIds.some(id => id.includes('gpt-4o-mini') || id.includes('gpt-4'));
+
+    if (!hasWhisper) {
+      return { valid: false, error: 'Your key does not have access to Whisper (needed for transcription).' };
+    }
+
+    return { valid: true, hasWhisper, hasGpt };
+  } catch (error) {
+    return { valid: false, error: 'Network error. Check your connection.' };
+  }
+}
+
+/**
+ * Show onboarding screen
+ */
+function showOnboarding() {
+  document.getElementById('onboardingScreen').style.display = 'flex';
+  document.getElementById('mainScreen').style.display = 'none';
+  document.getElementById('footerSection').style.display = 'none';
+  setupOnboardingListeners();
+}
+
+/**
+ * Show main UI
+ */
+function showMainUI() {
+  document.getElementById('onboardingScreen').style.display = 'none';
+  document.getElementById('mainScreen').style.display = 'flex';
+  document.getElementById('footerSection').style.display = 'flex';
+}
+
+/**
+ * Set up onboarding event listeners
+ */
+function setupOnboardingListeners() {
+  const validateKeyBtn = document.getElementById('validateKeyBtn');
+  const onboardingApiKey = document.getElementById('onboardingApiKey');
+
+  validateKeyBtn.addEventListener('click', handleValidateKey);
+  onboardingApiKey.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') handleValidateKey();
+  });
+}
+
+/**
+ * Handle API key validation
+ */
+async function handleValidateKey() {
+  const btn = document.getElementById('validateKeyBtn');
+  const btnText = document.getElementById('validateBtnText');
+  const spinner = document.getElementById('validateBtnSpinner');
+  const input = document.getElementById('onboardingApiKey');
+  const errorDiv = document.getElementById('onboardingError');
+  const errorText = document.getElementById('onboardingErrorText');
+
+  errorDiv.style.display = 'none';
+  btn.disabled = true;
+  btnText.textContent = 'Validating...';
+  spinner.style.display = 'inline-block';
+
+  const result = await validateOpenAIKey(input.value.trim());
+
+  if (result.valid) {
+    // Save API key
+    const current = await chrome.storage.local.get('settings');
+    const settings = current.settings || {};
+    settings.apiKey = input.value.trim();
+    await chrome.storage.local.set({ settings });
+
+    // Transition to main UI
+    showMainUI();
+
+    // Initialize main UI
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    currentTabId = tab?.id;
+    const isMeetTab = tab?.url?.includes('meet.google.com');
+
+    if (!isMeetTab) {
+      notMeetWarning.style.display = 'flex';
+      controls.style.display = 'none';
+    } else {
+      notMeetWarning.style.display = 'none';
+      controls.style.display = 'flex';
+    }
+
+    await loadSettings();
+    await checkRecordingStatus();
+    await loadTranscript();
+    setupEventListeners();
+  } else {
+    errorDiv.style.display = 'block';
+    errorText.textContent = result.error;
+  }
+
+  btn.disabled = false;
+  btnText.textContent = 'Validate & Continue';
+  spinner.style.display = 'none';
+}
+
+/**
  * Initialize the popup
  */
 async function init() {
+  // Check for API key first
+  const result = await chrome.storage.local.get('settings');
+  const settings = result.settings || {};
+
+  if (!settings.apiKey) {
+    showOnboarding();
+    return;
+  }
+
+  // Proceed with normal initialization
+  showMainUI();
+
   // Check if we're on a Google Meet tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   currentTabId = tab?.id;
@@ -75,7 +218,7 @@ async function loadSettings() {
   const result = await chrome.storage.local.get('settings');
   const settings = result.settings || {};
 
-  languageSelect.value = settings.language || 'en-US';
+  languageSelect.value = settings.language || 'ru-RU';
   providerSelect.value = settings.summaryProvider || 'openai';
   apiKeyInput.value = settings.apiKey || '';
   autoStartCheckbox.checked = settings.autoStart !== false;

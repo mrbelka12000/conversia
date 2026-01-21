@@ -16,7 +16,43 @@
       </div>
     </header>
 
-    <main class="main">
+    <!-- Onboarding Screen -->
+    <div class="onboarding" id="onboardingScreen" style="display: none;">
+      <div class="onboarding-content">
+        <div class="onboarding-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <h2 class="onboarding-title">Welcome to Conversia</h2>
+        <p class="onboarding-description">
+          To transcribe and summarize your Google Meet calls, enter your OpenAI API key.
+        </p>
+
+        <div class="form-group">
+          <label for="onboardingApiKey">OpenAI API Key</label>
+          <input type="password" id="onboardingApiKey" placeholder="sk-...">
+          <small>Your key is stored locally and never shared.</small>
+        </div>
+
+        <div class="onboarding-error" id="onboardingError" style="display: none;">
+          <span id="onboardingErrorText"></span>
+        </div>
+
+        <button class="btn btn-primary" id="validateKeyBtn">
+          <span id="validateBtnText">Validate & Continue</span>
+          <span id="validateBtnSpinner" class="spinner" style="display: none;"></span>
+        </button>
+
+        <a href="https://platform.openai.com/api-keys" target="_blank" class="onboarding-link">
+          Get an API key from OpenAI
+        </a>
+      </div>
+    </div>
+
+    <main class="main" id="mainScreen">
       <!-- Not on Meet warning -->
       <div class="warning" id="notMeetWarning" style="display: none;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -89,7 +125,7 @@
     </main>
 
     <!-- Settings -->
-    <footer class="footer">
+    <footer class="footer" id="footerSection">
       <button class="btn-icon" id="settingsBtn" title="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
@@ -116,7 +152,7 @@
             <select id="languageSelect">
               <option value="en-US">English (US)</option>
               <option value="en-GB">English (UK)</option>
-              <option value="ru-RU">Russian</option>
+              <option value="ru-RU" selected>Russian</option>
               <option value="es-ES">Spanish</option>
               <option value="fr-FR">French</option>
               <option value="de-DE">German</option>
@@ -131,7 +167,6 @@
             <label for="providerSelect">AI Summary Provider</label>
             <select id="providerSelect">
               <option value="openai">OpenAI (GPT-4o-mini)</option>
-              <option value="claude">Anthropic (Claude Haiku)</option>
             </select>
           </div>
           <div class="form-group">
