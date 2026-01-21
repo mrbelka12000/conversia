@@ -1,0 +1,20 @@
+{
+  "name": "conversia",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Chrome Extension for capturing and analyzing audio from Google Meet",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "prettier": "^3.3.1",
+    "vite": "^5.1.6"
+  },
+  "dependencies": {
+    "openai": "^4.52.0"
+  }
+}
