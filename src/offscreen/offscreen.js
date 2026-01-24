@@ -1,13 +1,16 @@
 /**
  * Offscreen Document
- * Captures tab audio and transcribes with Whisper
+ * Captures tab audio + microphone and transcribes with Whisper
  *
  * Key insight: MediaRecorder timeslice does NOT create independent files.
  * Only the first chunk has the WebM header. Solution: stop/restart recorder
  * for each transcription batch to get complete files with headers.
  */
 
-let mediaStream = null;
+let tabStream = null;
+let micStream = null;
+let mixedStream = null;
+let audioContext = null;
 let mediaRecorder = null;
 let isRecording = false;
 let audioElement = null;
@@ -19,6 +22,54 @@ let language = 'en';
 let mimeType = 'audio/webm';
 
 const WHISPER_INTERVAL = 15000; // 15s batches
+
+// Known Whisper hallucinations on silence (trained on subtitle data)
+const HALLUCINATION_PATTERNS = [
+  /редактор\s*(субтитров)?/i,
+  /корректор/i,
+  /субтитры/i,
+  /продолжение\s*следует/i,
+  /подписывайтесь/i,
+  /благодарим за просмотр/i,
+  /спасибо за просмотр/i,
+  /до новых встреч/i,
+  /translated by/i,
+  /subtitles by/i,
+  /captioned by/i,
+  /transcript by/i,
+  /thanks for watching/i,
+  /please subscribe/i,
+  /like and subscribe/i,
+  /see you next time/i,
+  /to be continued/i,
+  /the end/i,
+  /©/,
+  /www\./i,
+  /\.com/i,
+  /\.ru/i,
+];
+
+/**
+ * Check if transcript is likely a Whisper hallucination
+ */
+function isHallucination(text) {
+  if (!text || text.trim().length < 3) return true;
+
+  const normalized = text.trim().toLowerCase();
+
+  // Very short repeated phrases
+  if (normalized.length < 10 && /^(.)\1+$/.test(normalized)) return true;
+
+  // Check against known patterns
+  for (const pattern of HALLUCINATION_PATTERNS) {
+    if (pattern.test(text)) {
+      console.log('[Offscreen] Filtered hallucination:', text);
+      return true;
+    }
+  }
+
+  return false;
+}
 
 /**
  * Send audio to Whisper API for transcription
@@ -63,7 +114,13 @@ async function transcribeWithWhisper(audioBlob) {
     }
 
     const transcript = (await response.text()).trim();
-    console.log('[Offscreen] Transcript:', transcript);
+    console.log('[Offscreen] Raw transcript:', transcript);
+
+    // Filter out Whisper hallucinations
+    if (isHallucination(transcript)) {
+      return null;
+    }
+
     return transcript.length ? transcript : null;
   } catch (error) {
     console.error('[Offscreen] Whisper transcription failed:', error);
@@ -75,9 +132,9 @@ async function transcribeWithWhisper(audioBlob) {
  * Create and start a new MediaRecorder instance
  */
 function createMediaRecorder() {
-  if (!mediaStream) return null;
+  if (!mixedStream) return null;
 
-  const recorder = new MediaRecorder(mediaStream, { mimeType });
+  const recorder = new MediaRecorder(mixedStream, { mimeType });
   currentChunks = [];
 
   recorder.ondataavailable = (event) => {
@@ -119,7 +176,7 @@ function createMediaRecorder() {
  * Stop current recorder and start a new one (to get fresh WebM header)
  */
 function restartRecorder() {
-  if (!isRecording || !mediaStream) return;
+  if (!isRecording || !mixedStream) return;
 
   // Stop current recorder (triggers onstop which processes chunks)
   if (mediaRecorder && mediaRecorder.state === 'recording') {
@@ -135,7 +192,29 @@ function restartRecorder() {
 }
 
 /**
- * Start recording from tab
+ * Mix tab audio and microphone streams using Web Audio API
+ */
+function mixAudioStreams(tabAudioStream, micAudioStream) {
+  audioContext = new AudioContext();
+
+  // Create source nodes
+  const tabSource = audioContext.createMediaStreamSource(tabAudioStream);
+  const micSource = audioContext.createMediaStreamSource(micAudioStream);
+
+  // Create destination for mixed audio
+  const destination = audioContext.createMediaStreamDestination();
+
+  // Connect both sources to destination
+  tabSource.connect(destination);
+  micSource.connect(destination);
+
+  console.log('[Offscreen] Audio streams mixed');
+
+  return destination.stream;
+}
+
+/**
+ * Start recording from tab + microphone
  */
 async function startRecording(streamId, key, lang) {
   apiKey = key;
@@ -156,7 +235,8 @@ async function startRecording(streamId, key, lang) {
   try {
     console.log('[Offscreen] Starting recording with stream ID:', streamId);
 
-    mediaStream = await navigator.mediaDevices.getUserMedia({
+    // 1. Get tab audio stream
+    tabStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         mandatory: {
           chromeMediaSource: 'tab',
@@ -165,12 +245,34 @@ async function startRecording(streamId, key, lang) {
       },
       video: false,
     });
+    console.log('[Offscreen] Got tab audio stream');
 
-    console.log('[Offscreen] Got media stream');
+    // 2. Get microphone stream
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+      console.log('[Offscreen] Got microphone stream');
+    } catch (micError) {
+      console.warn('[Offscreen] Microphone access denied, using tab audio only:', micError.message);
+      micStream = null;
+    }
 
-    // Playback so user still hears the call
+    // 3. Mix streams if we have both, otherwise use tab only
+    if (micStream) {
+      mixedStream = mixAudioStreams(tabStream, micStream);
+    } else {
+      mixedStream = tabStream;
+    }
+
+    // Playback tab audio so user still hears the call
     audioElement = new Audio();
-    audioElement.srcObject = mediaStream;
+    audioElement.srcObject = tabStream;
     audioElement.play().catch((e) => {
       console.log('[Offscreen] Audio playback autoplay blocked:', e.message);
     });
@@ -203,7 +305,7 @@ async function startRecording(streamId, key, lang) {
       target: 'background',
     });
 
-    console.log('[Offscreen] Recording started successfully');
+    console.log('[Offscreen] Recording started successfully (tab + mic)');
   } catch (error) {
     console.error('[Offscreen] Failed to start recording:', error);
     throw error;
@@ -239,10 +341,24 @@ async function stopRecording() {
     audioElement = null;
   }
 
-  if (mediaStream) {
-    mediaStream.getTracks().forEach((t) => t.stop());
-    mediaStream = null;
+  // Close audio context
+  if (audioContext) {
+    audioContext.close().catch(() => {});
+    audioContext = null;
   }
+
+  // Stop all streams
+  if (tabStream) {
+    tabStream.getTracks().forEach((t) => t.stop());
+    tabStream = null;
+  }
+
+  if (micStream) {
+    micStream.getTracks().forEach((t) => t.stop());
+    micStream = null;
+  }
+
+  mixedStream = null;
 
   console.log('[Offscreen] Recording stopped');
 }

@@ -3,7 +3,7 @@
  * Handles UI interactions and communication with background service worker
  */
 
-import { summarize, generateLocalSummary } from '../lib/summarizer.js';
+import { summarize, generateLocalSummary, ANALYSIS_TYPES } from '../lib/summarizer.js';
 
 // DOM Elements
 const statusDot = document.getElementById('statusDot');
@@ -19,6 +19,8 @@ const downloadTranscriptBtn = document.getElementById('downloadTranscriptBtn');
 const clearTranscriptBtn = document.getElementById('clearTranscriptBtn');
 const summaryBtn = document.getElementById('summaryBtn');
 const summary = document.getElementById('summary');
+const analysisTypeSelect = document.getElementById('analysisTypeSelect');
+const analysisDescription = document.getElementById('analysisDescription');
 const settingsBtn = document.getElementById('settingsBtn');
 const settingsModal = document.getElementById('settingsModal');
 const closeSettingsBtn = document.getElementById('closeSettingsBtn');
@@ -314,6 +316,9 @@ function setupEventListeners() {
   // Generate summary
   summaryBtn.addEventListener('click', generateSummary);
 
+  // Analysis type selection
+  analysisTypeSelect.addEventListener('change', updateAnalysisDescription);
+
   // Settings
   settingsBtn.addEventListener('click', () => {
     settingsModal.style.display = 'flex';
@@ -505,6 +510,17 @@ async function clearTranscript() {
 }
 
 /**
+ * Update analysis description when type changes
+ */
+function updateAnalysisDescription() {
+  const selectedType = analysisTypeSelect.value;
+  const analysisType = ANALYSIS_TYPES[selectedType];
+  if (analysisType && analysisDescription) {
+    analysisDescription.textContent = analysisType.description;
+  }
+}
+
+/**
  * Generate summary
  */
 async function generateSummary() {
@@ -513,10 +529,13 @@ async function generateSummary() {
     return;
   }
 
+  const selectedAnalysisType = analysisTypeSelect.value;
+  const analysisType = ANALYSIS_TYPES[selectedAnalysisType];
+
   summaryBtn.disabled = true;
-  summaryBtn.textContent = 'Generating...';
+  summaryBtn.textContent = 'Analyzing...';
   statusDot.classList.add('processing');
-  statusText.textContent = 'Processing...';
+  statusText.textContent = `Analyzing (${analysisType.name})...`;
 
   try {
     const result = await chrome.storage.local.get('settings');
@@ -525,8 +544,8 @@ async function generateSummary() {
     let summaryText;
 
     if (settings.apiKey) {
-      // Use AI summarization
-      summaryText = await summarize(transcriptText, settings);
+      // Use AI summarization with selected analysis type
+      summaryText = await summarize(transcriptText, settings, selectedAnalysisType);
     } else {
       // Use local summary
       summaryText = generateLocalSummary(transcriptText);
@@ -548,7 +567,7 @@ async function generateSummary() {
       <line x1="16" y1="13" x2="8" y2="13"/>
       <line x1="16" y1="17" x2="8" y2="17"/>
     </svg>
-    Generate Summary
+    Analyze
   `;
   statusDot.classList.remove('processing');
   statusText.textContent = isRecording ? 'Recording...' : 'Not active';
