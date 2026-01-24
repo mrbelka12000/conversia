@@ -13,6 +13,7 @@ const STORAGE_KEYS = {
 const DEFAULT_SETTINGS = {
   language: 'en-US',
   autoStop: true,
+  autoDownload: true,
   showIndicator: true,
   apiKey: '',
   summaryProvider: 'openai', // 'openai' or 'claude'

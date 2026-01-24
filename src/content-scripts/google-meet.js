@@ -66,6 +66,7 @@ async function requestStopRecording() {
   try {
     await chrome.runtime.sendMessage({
       type: 'STOP_RECORDING',
+      autoTriggered: true,
     });
   } catch (error) {
     console.error('[Conversia] Error stopping recording:', error);

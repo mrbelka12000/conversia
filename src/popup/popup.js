@@ -19,6 +19,7 @@ const downloadTranscriptBtn = document.getElementById('downloadTranscriptBtn');
 const clearTranscriptBtn = document.getElementById('clearTranscriptBtn');
 const summaryBtn = document.getElementById('summaryBtn');
 const summary = document.getElementById('summary');
+const downloadSummaryBtn = document.getElementById('downloadSummaryBtn');
 const analysisTypeSelect = document.getElementById('analysisTypeSelect');
 const analysisDescription = document.getElementById('analysisDescription');
 const settingsBtn = document.getElementById('settingsBtn');
@@ -30,6 +31,7 @@ const providerSelect = document.getElementById('providerSelect');
 const apiKeyInput = document.getElementById('apiKeyInput');
 const autoStartCheckbox = document.getElementById('autoStartCheckbox');
 const autoStopCheckbox = document.getElementById('autoStopCheckbox');
+const autoDownloadCheckbox = document.getElementById('autoDownloadCheckbox');
 const showIndicatorCheckbox = document.getElementById('showIndicatorCheckbox');
 
 // State
@@ -38,6 +40,8 @@ let isRecording = false;
 let recordingStartTime = null;
 let timerInterval = null;
 let transcriptText = '';
+let currentSummaryText = '';
+let currentAnalysisType = 'general';
 
 /**
  * Validate OpenAI API key by listing available models
@@ -225,6 +229,7 @@ async function loadSettings() {
   apiKeyInput.value = settings.apiKey || '';
   autoStartCheckbox.checked = settings.autoStart !== false;
   autoStopCheckbox.checked = settings.autoStop !== false;
+  autoDownloadCheckbox.checked = settings.autoDownload !== false;
   showIndicatorCheckbox.checked = settings.showIndicator !== false;
 }
 
@@ -238,6 +243,7 @@ async function saveSettings() {
     apiKey: apiKeyInput.value,
     autoStart: autoStartCheckbox.checked,
     autoStop: autoStopCheckbox.checked,
+    autoDownload: autoDownloadCheckbox.checked,
     showIndicator: showIndicatorCheckbox.checked,
   };
 
@@ -315,6 +321,9 @@ function setupEventListeners() {
 
   // Generate summary
   summaryBtn.addEventListener('click', generateSummary);
+
+  // Download summary
+  downloadSummaryBtn.addEventListener('click', downloadSummary);
 
   // Analysis type selection
   analysisTypeSelect.addEventListener('change', updateAnalysisDescription);
@@ -504,9 +513,11 @@ function downloadTranscript() {
  */
 async function clearTranscript() {
   transcriptText = '';
+  currentSummaryText = '';
   await chrome.storage.local.remove('transcript');
   transcript.innerHTML = '<p class="transcript-empty">Transcript will appear here...</p>';
   summary.style.display = 'none';
+  downloadSummaryBtn.style.display = 'none';
 }
 
 /**
@@ -551,12 +562,18 @@ async function generateSummary() {
       summaryText = generateLocalSummary(transcriptText);
     }
 
+    // Store summary for download
+    currentSummaryText = summaryText;
+    currentAnalysisType = selectedAnalysisType;
+
     summary.innerHTML = summaryText.replace(/\n/g, '<br>');
     summary.style.display = 'block';
+    downloadSummaryBtn.style.display = 'flex';
   } catch (error) {
     console.error('Error generating summary:', error);
     summary.innerHTML = `<strong>Error:</strong> ${error.message}`;
     summary.style.display = 'block';
+    downloadSummaryBtn.style.display = 'none';
   }
 
   summaryBtn.disabled = false;
@@ -571,6 +588,96 @@ async function generateSummary() {
   `;
   statusDot.classList.remove('processing');
   statusText.textContent = isRecording ? 'Recording...' : 'Not active';
+}
+
+/**
+ * Extract topic from summary text
+ * @param {string} summaryText - The summary text
+ * @returns {string} - Extracted topic for filename
+ */
+function extractTopicFromSummary(summaryText) {
+  if (!summaryText) return '';
+
+  // Try to find a topic from common patterns in the summary
+  const patterns = [
+    /(?:Main topic|Topic|Purpose|Subject)[:\s]*([^\n]+)/i,
+    /(?:Meeting Context|Overview)[:\s]*\n?[^:]*?([^\n]+)/i,
+    /##\s*([^\n]+)/,  // First markdown heading
+    /\*\*([^*]+)\*\*/,  // First bold text
+  ];
+
+  for (const pattern of patterns) {
+    const match = summaryText.match(pattern);
+    if (match && match[1]) {
+      let topic = match[1].trim();
+      // Clean up the topic
+      topic = topic.replace(/[#*_]/g, '').trim();
+      // Limit length and sanitize for filename
+      if (topic.length > 3) {
+        return sanitizeFilename(topic.substring(0, 50));
+      }
+    }
+  }
+
+  // Fallback: use first meaningful line
+  const lines = summaryText.split('\n').filter(line => {
+    const cleaned = line.replace(/[#*_\-]/g, '').trim();
+    return cleaned.length > 5 && !cleaned.startsWith('##');
+  });
+
+  if (lines.length > 0) {
+    return sanitizeFilename(lines[0].substring(0, 50));
+  }
+
+  return '';
+}
+
+/**
+ * Sanitize string for use in filename
+ * @param {string} str - String to sanitize
+ * @returns {string} - Sanitized string
+ */
+function sanitizeFilename(str) {
+  return str
+    .toLowerCase()
+    .replace(/[^a-zа-яё0-9\s-]/gi, '')  // Keep letters (latin + cyrillic), numbers, spaces, hyphens
+    .replace(/\s+/g, '-')  // Replace spaces with hyphens
+    .replace(/-+/g, '-')   // Replace multiple hyphens with single
+    .replace(/^-|-$/g, '') // Remove leading/trailing hyphens
+    .substring(0, 50);     // Limit length
+}
+
+/**
+ * Download summary as text file
+ */
+function downloadSummary() {
+  if (!currentSummaryText) {
+    alert('No analysis to download');
+    return;
+  }
+
+  const analysisType = ANALYSIS_TYPES[currentAnalysisType];
+  const typeName = analysisType?.name?.toLowerCase().replace(/\s+/g, '-') || 'analysis';
+  const topic = extractTopicFromSummary(currentSummaryText);
+  const date = new Date().toISOString().slice(0, 10);
+
+  // Build filename: type-topic-date.txt or type-date.txt if no topic
+  let filename;
+  if (topic) {
+    filename = `conversia-${typeName}-${topic}-${date}.txt`;
+  } else {
+    filename = `conversia-${typeName}-${date}.txt`;
+  }
+
+  const blob = new Blob([currentSummaryText], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+
+  URL.revokeObjectURL(url);
 }
 
 // Initialize

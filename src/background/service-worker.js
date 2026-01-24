@@ -59,6 +59,48 @@ async function closeOffscreenDocument() {
 }
 
 /**
+ * Download transcript as a text file
+ */
+async function downloadTranscript() {
+  try {
+    const result = await chrome.storage.local.get('transcript');
+    const transcriptText = result.transcript || '';
+
+    if (!transcriptText) {
+      console.log('[ServiceWorker] No transcript to download');
+      return;
+    }
+
+    const date = new Date().toISOString().slice(0, 10);
+    const time = new Date().toLocaleTimeString().replace(/:/g, '-');
+    const filename = `conversia-transcript-${date}-${time}.txt`;
+
+    // Create a data URL from the transcript text
+    const blob = new Blob([transcriptText], { type: 'text/plain' });
+    const reader = new FileReader();
+
+    reader.onloadend = () => {
+      const dataUrl = reader.result;
+      chrome.downloads.download({
+        url: dataUrl,
+        filename: filename,
+        saveAs: false,
+      }, (downloadId) => {
+        if (chrome.runtime.lastError) {
+          console.error('[ServiceWorker] Download failed:', chrome.runtime.lastError);
+        } else {
+          console.log('[ServiceWorker] Transcript downloaded, id:', downloadId);
+        }
+      });
+    };
+
+    reader.readAsDataURL(blob);
+  } catch (error) {
+    console.error('[ServiceWorker] Error downloading transcript:', error);
+  }
+}
+
+/**
  * Start recording from a tab
  * @param {number} tabId - Tab ID to capture
  */
@@ -128,8 +170,9 @@ async function startRecording(tabId) {
 
 /**
  * Stop recording
+ * @param {boolean} autoTriggered - Whether this stop was triggered automatically (call end, tab close, etc.)
  */
-async function stopRecording() {
+async function stopRecording(autoTriggered = false) {
   if (!isRecording) {
     console.log('[ServiceWorker] Not recording');
     return { success: false, error: 'Not recording' };
@@ -173,6 +216,18 @@ async function stopRecording() {
       closeOffscreenDocument();
     }, 1000);
 
+    // Auto-download transcript if enabled and stop was auto-triggered
+    if (autoTriggered) {
+      const settingsResult = await chrome.storage.local.get('settings');
+      const settings = settingsResult.settings || {};
+      if (settings.autoDownload !== false) {
+        // Delay download to ensure final transcript chunk is saved
+        setTimeout(() => {
+          downloadTranscript();
+        }, 2000);
+      }
+    }
+
     console.log('[ServiceWorker] Recording stopped');
     return { success: true };
   } catch (error) {
@@ -215,7 +270,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'STOP_RECORDING') {
-    stopRecording().then(sendResponse);
+    stopRecording(message.autoTriggered === true).then(sendResponse);
     return true;
   }
 
@@ -266,7 +321,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === currentTabId && isRecording) {
     console.log('[ServiceWorker] Recording tab closed, stopping recording');
-    stopRecording();
+    stopRecording(true); // Auto-triggered
   }
 });
 
@@ -275,7 +330,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (tabId === currentTabId && isRecording && changeInfo.url) {
     if (!changeInfo.url.includes('meet.google.com')) {
       console.log('[ServiceWorker] Navigated away from Meet, stopping recording');
-      stopRecording();
+      stopRecording(true); // Auto-triggered
     }
   }
 });
